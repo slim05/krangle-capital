@@ -104,33 +104,39 @@
   }
 
   function renderPlayers(body) {
-    const list = players.filter((p) => (p.character_name + " " + p.card_id + " " + p.role).toLowerCase().includes(search.toLowerCase()));
     body.innerHTML =
       '<div class="tools"><input id="search" placeholder="Search employees…" value="' + esc(search) + '"></div>' +
-      '<table><thead><tr><th>Employee</th><th>Balance</th><th style="text-align:right">Adjust & controls</th></tr></thead><tbody>' +
-      list.map((p) =>
-        "<tr><td><div class=\"nm\">" + esc(p.character_name) + "</div>" +
-        '<div class="id">' + esc(p.card_id) + " · " + esc(p.role) + " " + statusChips(p) + "</div></td>" +
-        '<td class="bal">' + fmt(p.balance) + "</td>" +
-        '<td style="text-align:right"><div class="adminadj" style="justify-content:flex-end">' +
-        '<input type="number" id="amt_' + p.card_id + '" placeholder="amt" inputmode="numeric">' +
-        '<input class="note" id="note_' + p.card_id + '" placeholder="note (optional)">' +
-        '<button class="mini up" data-give="' + p.card_id + '">Give</button>' +
-        '<button class="mini dn" data-take="' + p.card_id + '">Fine</button>' +
-        '<button class="pill" data-pin="' + p.card_id + '" style="padding:5px 9px;font-size:11px">Reset PIN</button>' +
-        (p.locked ? '<button class="pill" data-unlock="' + p.card_id + '" style="padding:5px 9px;font-size:11px">Unlock</button>' : "") +
-        '<button class="pill" data-active="' + p.card_id + '" data-to="' + (!p.active) + '" style="padding:5px 9px;font-size:11px">' + (p.active ? "Deactivate" : "Activate") + "</button>" +
-        "</div></td></tr>"
-      ).join("") + "</tbody></table>";
-
+      '<div id="ptable"></div>';
     const s = document.getElementById("search");
-    s.oninput = () => { search = s.value; const list2 = players.filter((p) => (p.character_name + " " + p.card_id + " " + p.role).toLowerCase().includes(search.toLowerCase())); /* light: just re-render */ renderPlayers(body); document.getElementById("search").focus(); };
+    s.oninput = () => { search = s.value; drawRows(); };
+    drawRows();
 
-    body.querySelectorAll("[data-give]").forEach((b) => b.onclick = () => adjust(b.dataset.give, 1));
-    body.querySelectorAll("[data-take]").forEach((b) => b.onclick = () => adjust(b.dataset.take, -1));
-    body.querySelectorAll("[data-pin]").forEach((b) => b.onclick = () => action("admin_reset_pin", { p_pw: PW, p_card: b.dataset.pin }, "PIN reset — they’ll re-activate on next tap."));
-    body.querySelectorAll("[data-unlock]").forEach((b) => b.onclick = () => action("admin_unlock", { p_pw: PW, p_card: b.dataset.unlock }, "Account unlocked."));
-    body.querySelectorAll("[data-active]").forEach((b) => b.onclick = () => action("admin_set_active", { p_pw: PW, p_card: b.dataset.active, p_active: b.dataset.to === "true" }, "Updated."));
+    function drawRows() {
+      const list = players.filter((p) => (p.character_name + " " + p.card_id + " " + p.role).toLowerCase().includes(search.toLowerCase()));
+      const host = document.getElementById("ptable");
+      host.innerHTML =
+        '<table><thead><tr><th>Employee</th><th>Balance</th><th style="text-align:right">Adjust & controls</th></tr></thead><tbody>' +
+        list.map((p) =>
+          "<tr><td><div class=\"nm\">" + esc(p.character_name) + "</div>" +
+          '<div class="id">' + esc(p.card_id) + " · " + esc(p.role) + " " + statusChips(p) + "</div></td>" +
+          '<td class="bal">' + fmt(p.balance) + "</td>" +
+          '<td style="text-align:right"><div class="adminadj" style="justify-content:flex-end">' +
+          '<input type="number" id="amt_' + p.card_id + '" placeholder="amt" inputmode="numeric">' +
+          '<input class="note" id="note_' + p.card_id + '" placeholder="note (optional)">' +
+          '<button class="mini up" data-give="' + p.card_id + '">Give</button>' +
+          '<button class="mini dn" data-take="' + p.card_id + '">Fine</button>' +
+          '<button class="pill" data-pin="' + p.card_id + '" style="padding:5px 9px;font-size:11px">Reset PIN</button>' +
+          (p.locked ? '<button class="pill" data-unlock="' + p.card_id + '" style="padding:5px 9px;font-size:11px">Unlock</button>' : "") +
+          '<button class="pill" data-active="' + p.card_id + '" data-to="' + (!p.active) + '" style="padding:5px 9px;font-size:11px">' + (p.active ? "Deactivate" : "Activate") + "</button>" +
+          "</div></td></tr>"
+        ).join("") + "</tbody></table>";
+
+      host.querySelectorAll("[data-give]").forEach((b) => b.onclick = () => adjust(b.dataset.give, 1));
+      host.querySelectorAll("[data-take]").forEach((b) => b.onclick = () => adjust(b.dataset.take, -1));
+      host.querySelectorAll("[data-pin]").forEach((b) => b.onclick = () => action("admin_reset_pin", { p_pw: PW, p_card: b.dataset.pin }, "PIN reset — they’ll re-activate on next tap."));
+      host.querySelectorAll("[data-unlock]").forEach((b) => b.onclick = () => action("admin_unlock", { p_pw: PW, p_card: b.dataset.unlock }, "Account unlocked."));
+      host.querySelectorAll("[data-active]").forEach((b) => b.onclick = () => action("admin_set_active", { p_pw: PW, p_card: b.dataset.active, p_active: b.dataset.to === "true" }, "Updated."));
+    }
   }
 
   async function adjust(card, sign) {
