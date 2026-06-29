@@ -76,6 +76,7 @@
       '<button data-t="players" class="' + (tab === "players" ? "on" : "") + '">Employees</button>' +
       '<button data-t="tx" class="' + (tab === "tx" ? "on" : "") + '">Transactions</button>' +
       '<button data-t="settings" class="' + (tab === "settings" ? "on" : "") + '">Game controls</button>' +
+      '<button data-t="vote" class="' + (tab === "vote" ? "on" : "") + '">Voting</button>' +
       '<button data-t="logout" style="margin-left:auto">Lock</button>' +
       '</div><div id="tabbody"></div></div></div>';
     root.querySelectorAll(".tabbar button").forEach((b) => b.onclick = () => {
@@ -90,6 +91,7 @@
     const body = document.getElementById("tabbody");
     if (tab === "players") { await refreshPlayers(); renderPlayers(body); }
     else if (tab === "tx") { await refreshTx(); renderTx(body); }
+    else if (tab === "vote") { renderVoting(body); }
     else renderSettings(body);
   }
 
@@ -165,6 +167,81 @@
     const blob = new Blob([csv], { type: "text/csv" });
     const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
     a.download = "krangle_capital_transactions.csv"; a.click();
+  }
+
+  async function renderVoting(body) {
+    body.innerHTML = '<div class="loading" style="min-height:30vh"><div class="spinner"></div></div>';
+    const [st, themes, tally] = await Promise.all([
+      rpc("get_voting_status"),
+      rpc("admin_list_theme_options", { p_pw: PW }),
+      rpc("admin_voting_tally", { p_pw: PW })
+    ]);
+    const open = !!(st.data && st.data.open);
+    const themeList = (themes.error ? [] : themes.data) || [];
+    const cats = (tally.data && tally.data.categories) || [];
+
+    const tallyHtml = cats.map((c) => {
+      const top = (c.standings || []).slice(0, 3);
+      return '<div class="vtally"><b>' + esc(c.label) + "</b>" +
+        (top.length
+          ? top.map((r, i) => '<div class="vtally-row"><span>' + ["🥇", "🥈", "🥉"][i] + " " + esc(r.label) +
+              '</span><span>' + (c.kind === "theme" ? r.votes + " pts" : r.votes) + "</span></div>").join("")
+          : '<div class="note" style="margin:4px 0 0">No votes yet.</div>') + "</div>";
+    }).join("");
+
+    body.innerHTML =
+      '<div class="vadmin-status' + (open ? " on" : "") + '">Voting is currently <b>' + (open ? "OPEN" : "CLOSED") + "</b></div>" +
+      '<button class="btn ' + (open ? "btn-ghost" : "btn-gold") + '" id="vtoggle" style="margin-top:10px">' +
+      (open ? "Close voting & reveal results" : "Open voting for guests") + "</button>" +
+      '<p class="note">When open, guests get a “Cast your votes” button on their dashboard. Closing it unlocks the results screen: ' +
+      '<b>' + location.origin + '/results.html</b></p>' +
+
+      '<h4 class="vsec">Next Year’s Theme — options</h4>' +
+      '<p class="note" style="margin-top:0">The choices guests pick from in the theme category.</p>' +
+      '<div id="themeList"></div>' +
+      '<div class="adminadj" style="margin-top:8px"><input id="newTheme" class="note" placeholder="Add a theme option…" style="width:210px">' +
+      '<button class="pill up" id="addTheme">Add</button></div>' +
+
+      '<h4 class="vsec">Live tally <span class="note" style="font-weight:400">(only you can see this)</span></h4>' +
+      '<div class="vtally-grid">' + tallyHtml + "</div>" +
+
+      '<div class="danger" style="margin-top:14px"><h4>Reset all votes</h4>' +
+      '<p class="note" style="margin-top:0">Clears every ballot. Use before the party once testing is done.</p>' +
+      '<button class="pill red" id="resetVotes">Reset votes</button></div>';
+
+    function renderThemes(list) {
+      document.getElementById("themeList").innerHTML = list.length
+        ? list.map((t) => '<div class="theme-admin-row"><span>' + esc(t.label) +
+            '</span><button class="pill" data-rm="' + t.id + '" style="padding:4px 9px;font-size:11px">Remove</button></div>').join("")
+        : '<div class="note">No options yet — add some below.</div>';
+      document.querySelectorAll("[data-rm]").forEach((b) => (b.onclick = async () => {
+        await rpc("admin_remove_theme_option", { p_pw: PW, p_id: parseInt(b.dataset.rm, 10) });
+        const r = await rpc("admin_list_theme_options", { p_pw: PW });
+        renderThemes(r.error ? [] : r.data); toast("Removed.");
+      }));
+    }
+    renderThemes(themeList);
+
+    document.getElementById("vtoggle").onclick = async () => {
+      const r = await rpc("admin_set_voting_open", { p_pw: PW, p_open: !open });
+      if (r.data && r.data.ok) { toast(!open ? "Voting opened." : "Voting closed."); renderVoting(body); }
+      else toast("Couldn’t update.", true);
+    };
+    document.getElementById("addTheme").onclick = async () => {
+      const v = document.getElementById("newTheme").value.trim();
+      if (!v) return toast("Type an option first.", true);
+      const r = await rpc("admin_add_theme_option", { p_pw: PW, p_label: v });
+      if (r.data && r.data.ok) {
+        const l = await rpc("admin_list_theme_options", { p_pw: PW });
+        renderThemes(l.error ? [] : l.data); document.getElementById("newTheme").value = ""; toast("Added.");
+      } else toast("Couldn’t add.", true);
+    };
+    document.getElementById("resetVotes").onclick = async () => {
+      if (!confirm("Clear ALL votes? This can’t be undone.")) return;
+      const r = await rpc("admin_reset_votes", { p_pw: PW });
+      if (r.data && r.data.ok) { toast("Votes cleared."); renderVoting(body); }
+      else toast("Failed.", true);
+    };
   }
 
   function renderSettings(body) {

@@ -50,6 +50,7 @@
     NOT_ACTIVATED: "Activate your card before sending funds.",
     LOCKED: "Too many wrong codes — locked for 2 minutes. Finance is watching.",
     INSUFFICIENT: "You cannot spend money you do not have. Unlike management.",
+    MONEY_LOCKED: "Finance is closed during awards voting. Transfers reopen after the reveal.",
     BAD_PIN_FORMAT: "Your access code must be exactly 3 digits."
   };
   const errText = (code) => ERR[code] || "Something went wrong. Try again.";
@@ -137,10 +138,12 @@
     const acc = await fetchAccount(CARD);
     if (!acc) { renderNotFound("Card not recognized", "Check with the host."); return; }
     state.acc = acc;
-    const [lb, tx] = await Promise.all([
+    const [lb, tx, vs] = await Promise.all([
       sb.rpc("get_leaderboard"),
-      sb.rpc("get_my_transactions", { p_card: CARD, p_limit: 15 })
+      sb.rpc("get_my_transactions", { p_card: CARD, p_limit: 15 }),
+      sb.rpc("get_voting_status")
     ]);
+    const votingOpen = !!(vs && vs.data && vs.data.open);
     const board = (lb.data || []);
     const rank = board.findIndex((p) => p.card_id === CARD) + 1;
     const rt = rating(acc.balance);
@@ -172,11 +175,15 @@
       '<div class="sub">' + tier(rank) + "</div></div>" +
       '<div class="stat"><div class="k">Performance Rating</div><div class="v">' + rt.g + "</div>" +
       '<div class="sub ' + (rt.warn ? "warn" : "") + '">' + rt.t + "</div></div></div>" +
-      '<button class="btn btn-gold" id="toXfer">Send Krangle Capital →</button>' +
+      (votingOpen
+        ? '<div class="money-locked">💰 Transfers are paused during awards voting.</div>' +
+          '<button class="btn btn-vote" id="toVote">🗳&nbsp;&nbsp;Cast your votes</button>'
+        : '<button class="btn btn-gold" id="toXfer">Send Krangle Capital →</button>') +
       '<div class="sec-h" style="margin-top:20px"><h3>Recent Activity</h3><div class="rule"></div></div>' +
       txHtml +
       '<div class="foot">Krangle &amp; Co. · Finance Division · Fully Auditable</div>';
-    document.getElementById("toXfer").onclick = () => renderTransfer(acc, board);
+    if (votingOpen) document.getElementById("toVote").onclick = () => renderBallot();
+    else document.getElementById("toXfer").onclick = () => renderTransfer(acc, board);
   }
 
   // ---------- TRANSFER (type-to-search recipient) ----------
@@ -247,8 +254,120 @@
     };
   }
 
+  // ---------- AWARDS BALLOT ----------
+  async function renderBallot() {
+    root.innerHTML = '<div class="center"><div class="phone">' + bar("Awards Ballot", "Confidential") +
+      '<div class="body"><div class="loading" style="min-height:40vh"><div class="spinner"></div></div></div></div></div>';
+    const voter = me() || CARD;
+    const { data } = await sb.rpc("get_ballot", { p_voter: voter });
+    const cats = data || [];
+    const expanded = {};
+
+    function thumbById(card_id, name) {
+      const p = PHOTOS[card_id];
+      if (p) return '<img class="rr-av" src="headshots/' + p + '" alt="">';
+      const i = (name || "?").split(" ").slice(-2).map((s) => s[0]).join("");
+      return '<div class="rr-av mini-av">' + esc(i) + "</div>";
+    }
+
+    const body = document.querySelector("#root .body");
+    body.innerHTML =
+      '<button class="back" id="back">‹ Account</button>' +
+      '<div class="th">Krangle &amp; Co. Awards Ballot</div>' +
+      '<p class="ballot-intro">Award picks save the moment you tap a name. For the theme, set your order and tap <b>Save my ranking</b>. You can change anything until voting closes.</p>' +
+      '<div id="cats"></div>' +
+      '<button class="btn btn-gold" id="done" style="margin-top:16px">Done</button>';
+    document.getElementById("back").onclick = () => renderDashboard();
+    document.getElementById("done").onclick = () => renderDashboard();
+
+    function renderCat(c) {
+      const el = document.getElementById("cat_" + c.id);
+      if (!el) return;
+      if (c.kind === "theme") {
+        const opts = c.options || [];
+        if (!opts.length) {
+          el.innerHTML = '<div class="vcat-h">' + esc(c.label) + '</div><div class="vcat-empty">The host hasn’t added theme options yet.</div>';
+          return;
+        }
+        const byId = {}; opts.forEach((o) => (byId[o.theme_id] = o));
+        let order = (c.ranking && c.ranking.length) ? c.ranking.filter((id) => byId[id]) : [];
+        opts.forEach((o) => { if (order.indexOf(o.theme_id) < 0) order.push(o.theme_id); });
+        c._order = order;
+        function draw() {
+          el.innerHTML = '<div class="vcat-h">' + esc(c.label) + "</div>" +
+            '<p class="rank-help">Rank these in your order of preference — #1 is your top pick — then Save.</p>' +
+            '<div class="rank-list">' + c._order.map((id, i) => {
+              const o = byId[id];
+              return '<div class="rank-item"><div class="rank-badge">' + (i + 1) + "</div>" +
+                '<img class="rank-ic" src="themes/' + esc(o.icon) + '" alt="">' +
+                '<div class="rank-tx"><b>' + esc(o.label) + "</b><span>" + esc(o.blurb || "") + "</span></div>" +
+                '<div class="rank-btns"><button type="button" class="rank-up" data-i="' + i + '"' + (i === 0 ? " disabled" : "") + ">▲</button>" +
+                '<button type="button" class="rank-dn" data-i="' + i + '"' + (i === c._order.length - 1 ? " disabled" : "") + ">▼</button></div></div>";
+            }).join("") + "</div>" +
+            '<button type="button" class="btn btn-gold rank-save" style="margin-top:10px">Save my ranking</button>';
+          el.querySelectorAll(".rank-up").forEach((b) => (b.onclick = () => mv(parseInt(b.dataset.i, 10), -1)));
+          el.querySelectorAll(".rank-dn").forEach((b) => (b.onclick = () => mv(parseInt(b.dataset.i, 10), 1)));
+          el.querySelector(".rank-save").onclick = save;
+        }
+        function mv(i, d) {
+          const j = i + d; if (j < 0 || j >= c._order.length) return;
+          const t = c._order[i]; c._order[i] = c._order[j]; c._order[j] = t; draw();
+        }
+        async function save() {
+          const r = await sb.rpc("set_theme_ranking", { p_voter: voter, p_theme_ids: c._order });
+          toast(r.data && r.data.ok ? "Ranking saved." : (r.data && r.data.error === "CLOSED" ? "Voting has closed." : "Couldn’t save."), !(r.data && r.data.ok));
+        }
+        draw();
+        return;
+      }
+      const opts = c.options || [];
+      const chosen = c.choice_card ? opts.find((o) => o.card_id === c.choice_card) : null;
+      if (!expanded[c.id] && chosen) {
+        el.innerHTML = '<div class="vcat-h">' + esc(c.label) + "</div>" +
+          '<div class="vpick">' + thumbById(chosen.card_id, chosen.name) +
+          '<div class="rr-txt"><b>' + esc(chosen.name) + "</b><span>" + esc(chosen.role) + "</span></div>" +
+          '<button type="button" class="vchange">Change</button></div>';
+        el.querySelector(".vchange").onclick = () => { expanded[c.id] = true; renderCat(c); };
+        return;
+      }
+      el.innerHTML = '<div class="vcat-h">' + esc(c.label) + "</div>" +
+        '<input class="recip-search" placeholder="Type a name…" autocomplete="off">' +
+        '<div class="recip-list"></div>';
+      const s = el.querySelector(".recip-search");
+      const listEl = el.querySelector(".recip-list");
+      function upd() {
+        const f = (s.value || "").trim().toLowerCase();
+        const m = opts.filter((o) => (o.name + " " + o.role).toLowerCase().includes(f)).slice(0, 6);
+        listEl.innerHTML = m.length
+          ? m.map((o) => '<button type="button" class="recip-row" data-id="' + o.card_id + '">' +
+              thumbById(o.card_id, o.name) + '<div class="rr-txt"><b>' + esc(o.name) + "</b><span>" +
+              esc(o.role) + "</span></div></button>").join("")
+          : '<div class="recip-empty">No match — try another name.</div>';
+        listEl.querySelectorAll(".recip-row").forEach((b) => (b.onclick = async () => {
+          const r = await sb.rpc("cast_vote", { p_voter: voter, p_category: c.id, p_choice_card: b.dataset.id });
+          if (r.data && r.data.ok) { c.choice_card = b.dataset.id; expanded[c.id] = false; toast("Vote saved."); renderCat(c); }
+          else toast(r.data && r.data.error === "CLOSED" ? "Voting has closed." : "Couldn’t save that vote.", true);
+        }));
+      }
+      s.oninput = upd; upd();
+    }
+
+    document.getElementById("cats").innerHTML = cats.map((c) => '<div class="vcat" id="cat_' + c.id + '"></div>').join("");
+    cats.forEach(renderCat);
+  }
+
   // ---------- QUICK-PAY (you tapped someone else's card) ----------
-  function renderQuickPay(target) {
+  async function renderQuickPay(target) {
+    const vs = await sb.rpc("get_voting_status");
+    if (vs && vs.data && vs.data.open) {
+      root.innerHTML = '<div class="center"><div class="phone">' + bar("Quick Pay", "Paused") +
+        '<div class="body"><button class="back" id="back">‹ My account</button>' +
+        '<div class="money-locked" style="margin-top:16px">💰 Transfers are paused during awards voting. Hang tight — they’ll reopen after the reveal.</div>' +
+        '<button class="btn btn-gold" id="home" style="margin-top:14px">Back to my account</button></div></div></div>';
+      document.getElementById("back").onclick = () => (location.href = "card.html?id=" + encodeURIComponent(me() || CARD));
+      document.getElementById("home").onclick = () => (location.href = "card.html?id=" + encodeURIComponent(me() || CARD));
+      return;
+    }
     root.innerHTML = '<div class="center"><div class="phone">' + bar("Quick Pay", "Auditable") +
       '<div class="body">' +
       '<button class="back" id="back">‹ My account</button>' +
