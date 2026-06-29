@@ -12,6 +12,23 @@
   const params = new URLSearchParams(location.search);
   const CARD = (params.get("id") || "").toUpperCase().trim();
   const ME_KEY = "kc_me";
+
+  const PHOTOS = {
+    "KC-001":"Kris_Krangle.jpg","KC-002":"Greer_Styles.jpg","KC-003":"Bradley_Pickens.jpg",
+    "KC-004":"Keegan_Ng.jpg","KC-005":"Rowan_Black.jpg","KC-006":"Frankie_Ford.jpg",
+    "KC-007":"Blake_Vega.jpg","KC-008":"Cody_Bright.jpg","KC-009":"Drew_Daniels.jpg",
+    "KC-010":"Micah_Rojas.jpg","KC-011":"Dr_Patrice_Lin.jpg","KC-012":"Randy_Tinsley.jpg",
+    "KC-013":"Riley_Marsh.jpg","KC-014":"Taylor_Knox.jpg","KC-015":"Max_Caldwell.jpg",
+    "KC-016":"Jordan_Rowe.jpg","KC-017":"Shiloh_Dobbins.jpg","KC-018":"Morgan_Reed.jpg",
+    "KC-019":"Devon_Yamada.jpg","KC-020":"Lexi_Hale.jpg","KC-021":"Sterling_Frost.jpg",
+    "KC-022":"Cedar_Wells.jpg","KC-023":"Gabe_Snowden.jpg","KC-024":"Robin_Pyne.jpg",
+    "KC-025":"Sage_Garland.jpg","KC-026":"Ivy_Maddox.jpg","KC-027":"Carol_Hollis.jpg",
+    "KC-028":"Joy_Calloway.jpg","KC-029":"Marley_Birch.jpg","KC-030":"Holland_Reyes.jpg",
+    "KC-031":"Star_Vance.jpg","KC-032":"Sunny_Belle.jpg","KC-033":"Nick_Chestnut.jpg",
+    "KC-034":"Crispin_Vaughn.jpg","KC-035":"Goldie_Vaux.jpg","KC-036":"Penny_Lowe.jpg",
+    "KC-037":"Jack_Brisk.jpg","KC-038":"Hazel_Crisp.jpg","KC-039":"Noel_Ashford.jpg",
+    "KC-040":"Reggie_Pemberton.jpg"
+  };
   const me = () => localStorage.getItem(ME_KEY);
   const setMe = (id) => localStorage.setItem(ME_KEY, id);
 
@@ -162,13 +179,21 @@
     document.getElementById("toXfer").onclick = () => renderTransfer(acc, board);
   }
 
-  // ---------- TRANSFER (choose recipient from list) ----------
+  // ---------- TRANSFER (type-to-search recipient) ----------
   async function renderTransfer(acc) {
-    const body = '<div class="center"><div class="phone">' + bar("Transfer Funds", "Auditable") +
+    root.innerHTML = '<div class="center"><div class="phone">' + bar("Transfer Funds", "Auditable") +
       '<div class="body" id="xb"><div class="loading" style="min-height:40vh"><div class="spinner"></div></div></div></div></div>';
-    root.innerHTML = body;
     const { data: recips } = await sb.rpc("list_recipients", { p_card: CARD });
-    const opts = (recips || []).map((r) => '<option value="' + r.card_id + '">' + esc(r.character_name) + " — " + esc(r.role) + "</option>").join("");
+    const list = recips || [];
+    let selected = null;
+
+    function thumb(r) {
+      const p = PHOTOS[r.card_id];
+      if (p) return '<img class="rr-av" src="headshots/' + p + '" alt="">';
+      const i = r.character_name.split(" ").slice(-2).map((s) => s[0]).join("");
+      return '<div class="rr-av mini-av">' + esc(i) + "</div>";
+    }
+
     document.getElementById("xb").innerHTML =
       '<button class="back" id="back">‹ Account</button>' +
       '<div class="th">Send Krangle Capital</div>' +
@@ -176,7 +201,10 @@
       '<div class="inp"><span>$</span><input id="amt" class="fr" inputmode="numeric" placeholder="0"></div>' +
       '<div class="avail">Available: ' + fmt(acc.balance) + "</div></div>" +
       '<div class="fieldlbl">Pay to</div>' +
-      '<select id="recip"><option value="">Select an employee…</option>' + opts + "</select>" +
+      '<div id="picker">' +
+      '<input id="rsearch" class="recip-search" placeholder="Type a name to search…" autocomplete="off">' +
+      '<div id="rlist" class="recip-list"></div>' +
+      '<div id="rchosen"></div></div>' +
       '<div class="fieldlbl">Memo (optional)</div>' +
       '<input class="amtfield" id="memo" style="font-size:15px;font-family:Archivo;text-align:left" placeholder="e.g. consulting fee" maxlength="60">' +
       '<div class="fieldlbl">Your 3-digit access code</div>' +
@@ -184,11 +212,38 @@
       '<div id="xmsg" class="msg" style="text-align:center"></div>' +
       '<button class="btn btn-gold" id="send" style="margin-top:12px">Send</button>' +
       '<div class="taptip">Tip: you can also pay someone by tapping <b>their</b> card to your phone.</div>';
+
+    const search = document.getElementById("rsearch");
+    const listEl = document.getElementById("rlist");
+    const chosenEl = document.getElementById("rchosen");
+
+    function updateList() {
+      const f = (search.value || "").trim().toLowerCase();
+      const matches = list.filter((r) => (r.character_name + " " + r.role).toLowerCase().includes(f)).slice(0, 8);
+      listEl.innerHTML = matches.length
+        ? matches.map((r) => '<button type="button" class="recip-row" data-id="' + r.card_id + '">' + thumb(r) +
+            '<div class="rr-txt"><b>' + esc(r.character_name) + "</b><span>" + esc(r.role) + "</span></div></button>").join("")
+        : '<div class="recip-empty">No match — try another name.</div>';
+      listEl.querySelectorAll(".recip-row").forEach((b) => (b.onclick = () => choose(b.dataset.id)));
+    }
+    function choose(id) {
+      selected = list.find((r) => r.card_id === id);
+      search.style.display = "none"; listEl.style.display = "none";
+      chosenEl.innerHTML = '<div class="recip-chosen">' + thumb(selected) +
+        '<div class="rr-txt"><b>' + esc(selected.character_name) + "</b><span>" + esc(selected.role) + "</span></div>" +
+        '<button type="button" id="chg">Change</button></div>';
+      document.getElementById("chg").onclick = () => {
+        selected = null; chosenEl.innerHTML = "";
+        search.style.display = ""; listEl.style.display = ""; search.value = ""; updateList(); search.focus();
+      };
+    }
+    search.oninput = updateList;
+    updateList();
+
     document.getElementById("back").onclick = () => renderDashboard();
     document.getElementById("send").onclick = () => {
-      const to = document.getElementById("recip").value;
-      if (!to) { document.getElementById("xmsg").className = "msg err"; document.getElementById("xmsg").textContent = "Choose who to pay."; return; }
-      doTransfer(CARD, to, document.getElementById("xmsg"), document.getElementById("send"));
+      if (!selected) { const m = document.getElementById("xmsg"); m.className = "msg err"; m.textContent = "Choose who to pay (type a name above)."; return; }
+      doTransfer(CARD, selected.card_id, document.getElementById("xmsg"), document.getElementById("send"));
     };
   }
 
