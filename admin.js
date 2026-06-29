@@ -18,6 +18,12 @@
   function toast(m, e) { const t = document.getElementById("toast"); t.textContent = m; t.className = "toast show" + (e ? " err" : ""); clearTimeout(tt); tt = setTimeout(() => (t.className = "toast"), 2600); }
 
   async function rpc(fn, args) { return await sb.rpc(fn, args || {}); }
+  function failMsg(r) {
+    if (!r) return "no response";
+    if (r.error) return (r.error.code ? r.error.code + ": " : "") + (r.error.message || r.error.hint || "error") + (r.error.details ? " — " + r.error.details : "");
+    if (r.data && r.data.error) return r.data.error;
+    return "unknown error";
+  }
 
   // ---------- auth ----------
   async function start() {
@@ -145,12 +151,12 @@
     if (!amt || amt <= 0) return toast("Enter an amount.", true);
     const r = await rpc("admin_adjust", { p_pw: PW, p_card: card, p_amount: sign * amt, p_note: note || (sign > 0 ? "Holiday bonus" : "Adjustment") });
     if (r.data && r.data.ok) { toast((sign > 0 ? "Gave " : "Fined ") + fmt(amt) + "."); await refreshPlayers(); renderPlayers(document.getElementById("tabbody")); }
-    else toast("Couldn’t apply.", true);
+    else toast("Couldn’t apply → " + failMsg(r), true);
   }
   async function action(fn, args, ok) {
     const r = await rpc(fn, args);
     if (r.data && r.data.ok) { toast(ok); await refreshPlayers(); renderPlayers(document.getElementById("tabbody")); }
-    else toast("Action failed.", true);
+    else toast("Action failed → " + failMsg(r), true);
   }
 
   function renderTx(body) {
@@ -231,7 +237,7 @@
     document.getElementById("vtoggle").onclick = async () => {
       const r = await rpc("admin_set_voting_open", { p_pw: PW, p_open: !open });
       if (r.data && r.data.ok) { toast(!open ? "Voting opened." : "Voting closed."); renderVoting(body); }
-      else toast("Couldn’t update.", true);
+      else toast("Couldn’t update → " + failMsg(r), true);
     };
     document.getElementById("addTheme").onclick = async () => {
       const v = document.getElementById("newTheme").value.trim();
@@ -246,7 +252,7 @@
       if (!confirm("Clear ALL votes? This can’t be undone.")) return;
       const r = await rpc("admin_reset_votes", { p_pw: PW });
       if (r.data && r.data.ok) { toast("Votes cleared."); renderVoting(body); }
-      else toast("Failed.", true);
+      else toast("Reset votes failed → " + failMsg(r), true);
     };
   }
 
@@ -265,12 +271,12 @@
     document.getElementById("rb").onclick = async () => {
       if (!confirm("Reset ALL balances to $1,000 and clear the transaction log?")) return;
       const r = await rpc("admin_reset_balances", { p_pw: PW, p_clear_tx: true });
-      toast(r.data && r.data.ok ? "Balances reset." : "Failed.", !(r.data && r.data.ok));
+      toast(r.data && r.data.ok ? "Balances reset." : "Reset failed → " + failMsg(r), !(r.data && r.data.ok));
     };
     document.getElementById("fr").onclick = async () => {
       if (!confirm("FULL RESET: balances to $1,000, clear all transactions, and de-activate everyone (they’ll re-set PINs). Continue?")) return;
       const r = await rpc("admin_full_reset", { p_pw: PW });
-      toast(r.data && r.data.ok ? "Full reset complete." : "Failed.", !(r.data && r.data.ok));
+      toast(r.data && r.data.ok ? "Full reset complete." : "Reset failed → " + failMsg(r), !(r.data && r.data.ok));
     };
     document.getElementById("cp").onclick = async () => {
       const np = document.getElementById("np").value;
