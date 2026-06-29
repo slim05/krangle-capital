@@ -141,9 +141,10 @@
     const [lb, tx, vs] = await Promise.all([
       sb.rpc("get_leaderboard"),
       sb.rpc("get_my_transactions", { p_card: CARD, p_limit: 15 }),
-      sb.rpc("get_voting_status")
+      sb.rpc("get_my_voting", { p_voter: CARD })
     ]);
-    const votingOpen = !!(vs && vs.data && vs.data.open);
+    const v = (vs && vs.data) || {};
+    const votingOpen = !!v.open, moneyLocked = !!v.money_locked, submitted = !!v.submitted;
     const board = (lb.data || []);
     const rank = board.findIndex((p) => p.card_id === CARD) + 1;
     const rt = rating(acc.balance);
@@ -175,15 +176,18 @@
       '<div class="sub">' + tier(rank) + "</div></div>" +
       '<div class="stat"><div class="k">Performance Rating</div><div class="v">' + rt.g + "</div>" +
       '<div class="sub ' + (rt.warn ? "warn" : "") + '">' + rt.t + "</div></div></div>" +
-      (votingOpen
-        ? '<div class="money-locked">💰 Transfers are paused during awards voting.</div>' +
-          '<button class="btn btn-vote" id="toVote">🗳&nbsp;&nbsp;Cast your votes</button>'
+      (votingOpen && !submitted ? '<button class="btn btn-vote" id="toVote">🗳&nbsp;&nbsp;Cast your votes</button>' : "") +
+      (votingOpen && submitted ? '<div class="votes-done">✓ Votes Submitted</div>' : "") +
+      (!votingOpen && moneyLocked ? '<button class="btn btn-ghost" id="toResults">🏆&nbsp;&nbsp;See the awards results →</button>' : "") +
+      (moneyLocked
+        ? '<div class="money-locked">💰 Transfers are closed.</div>'
         : '<button class="btn btn-gold" id="toXfer">Send Krangle Capital →</button>') +
       '<div class="sec-h" style="margin-top:20px"><h3>Recent Activity</h3><div class="rule"></div></div>' +
       txHtml +
       '<div class="foot">Krangle &amp; Co. · Finance Division · Fully Auditable</div>';
-    if (votingOpen) document.getElementById("toVote").onclick = () => renderBallot();
-    else document.getElementById("toXfer").onclick = () => renderTransfer(acc, board);
+    if (votingOpen && !submitted) document.getElementById("toVote").onclick = () => renderBallot();
+    if (!votingOpen && moneyLocked) document.getElementById("toResults").onclick = () => (location.href = "results.html");
+    if (!moneyLocked) document.getElementById("toXfer").onclick = () => renderTransfer(acc, board);
   }
 
   // ---------- TRANSFER (type-to-search recipient) ----------
@@ -269,16 +273,27 @@
       const i = (name || "?").split(" ").slice(-2).map((s) => s[0]).join("");
       return '<div class="rr-av mini-av">' + esc(i) + "</div>";
     }
+    function shuffle(arr) {
+      const a = (arr || []).slice();
+      for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); const t = a[i]; a[i] = a[j]; a[j] = t; }
+      return a;
+    }
 
     const body = document.querySelector("#root .body");
     body.innerHTML =
       '<button class="back" id="back">‹ Account</button>' +
       '<div class="th">Krangle &amp; Co. Awards Ballot</div>' +
-      '<p class="ballot-intro">Award picks save the moment you tap a name. For the theme, set your order and tap <b>Save my ranking</b>. You can change anything until voting closes.</p>' +
+      '<p class="ballot-intro">Award picks save the moment you tap a name. For the theme, set your order and tap <b>Save my ranking</b>. When everything looks good, hit <b>Submit my votes</b> below — that locks your ballot.</p>' +
       '<div id="cats"></div>' +
-      '<button class="btn btn-gold" id="done" style="margin-top:16px">Done</button>';
+      '<button class="btn btn-vote" id="submit" style="margin-top:18px">Submit my votes</button>' +
+      '<p class="taptip">Not ready? Use ‹ Account to come back later — nothing is final until you submit.</p>';
     document.getElementById("back").onclick = () => renderDashboard();
-    document.getElementById("done").onclick = () => renderDashboard();
+    document.getElementById("submit").onclick = async () => {
+      if (!confirm("Submit your votes? You won’t be able to change them after this.")) return;
+      const r = await sb.rpc("submit_votes", { p_voter: voter });
+      if (r.data && r.data.ok) { toast("Votes submitted — thank you!"); renderDashboard(); }
+      else toast(r.data && r.data.error === "CLOSED" ? "Voting has closed." : "Couldn’t submit. Try again.", true);
+    };
 
     function renderCat(c) {
       const el = document.getElementById("cat_" + c.id);
@@ -320,7 +335,7 @@
         draw();
         return;
       }
-      const opts = c.options || [];
+      const opts = c._opts || (c._opts = shuffle(c.options || []));
       const chosen = c.choice_card ? opts.find((o) => o.card_id === c.choice_card) : null;
       if (!expanded[c.id] && chosen) {
         el.innerHTML = '<div class="vcat-h">' + esc(c.label) + "</div>" +
@@ -337,7 +352,7 @@
       const listEl = el.querySelector(".recip-list");
       function upd() {
         const f = (s.value || "").trim().toLowerCase();
-        const m = opts.filter((o) => (o.name + " " + o.role).toLowerCase().includes(f)).slice(0, 6);
+        const m = opts.filter((o) => (o.name + " " + o.role).toLowerCase().includes(f));
         listEl.innerHTML = m.length
           ? m.map((o) => '<button type="button" class="recip-row" data-id="' + o.card_id + '">' +
               thumbById(o.card_id, o.name) + '<div class="rr-txt"><b>' + esc(o.name) + "</b><span>" +
@@ -358,11 +373,11 @@
 
   // ---------- QUICK-PAY (you tapped someone else's card) ----------
   async function renderQuickPay(target) {
-    const vs = await sb.rpc("get_voting_status");
-    if (vs && vs.data && vs.data.open) {
-      root.innerHTML = '<div class="center"><div class="phone">' + bar("Quick Pay", "Paused") +
+    const vs = await sb.rpc("get_my_voting", { p_voter: me() || CARD });
+    if (vs && vs.data && vs.data.money_locked) {
+      root.innerHTML = '<div class="center"><div class="phone">' + bar("Quick Pay", "Closed") +
         '<div class="body"><button class="back" id="back">‹ My account</button>' +
-        '<div class="money-locked" style="margin-top:16px">💰 Transfers are paused during awards voting. Hang tight — they’ll reopen after the reveal.</div>' +
+        '<div class="money-locked" style="margin-top:16px">💰 Transfers are closed for the awards. Tap below to head back.</div>' +
         '<button class="btn btn-gold" id="home" style="margin-top:14px">Back to my account</button></div></div></div>';
       document.getElementById("back").onclick = () => (location.href = "card.html?id=" + encodeURIComponent(me() || CARD));
       document.getElementById("home").onclick = () => (location.href = "card.html?id=" + encodeURIComponent(me() || CARD));

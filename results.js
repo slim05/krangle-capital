@@ -1,4 +1,4 @@
-/* ===== Krangle Capital — Awards Results (TV) ===== */
+/* ===== Krangle Capital — Awards Results (TV reveal) ===== */
 (function () {
   const cfg = window.KC_CONFIG || {};
   const el = document.getElementById("res");
@@ -9,6 +9,8 @@
   const sb = window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY);
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const money = (n) => "$" + Number(n).toLocaleString();
+  const MEDALS = ["🥇", "🥈", "🥉"];
 
   const PHOTOS = {
     "KC-001":"Kris_Krangle.jpg","KC-002":"Greer_Styles.jpg","KC-003":"Bradley_Pickens.jpg",
@@ -26,62 +28,76 @@
     "KC-037":"Jack_Brisk.jpg","KC-038":"Hazel_Crisp.jpg","KC-039":"Noel_Ashford.jpg",
     "KC-040":"Reggie_Pemberton.jpg"
   };
-  const MEDALS = ["🥇", "🥈", "🥉"];
-
-  function avatar(row) {
-    if (row.card_id && PHOTOS[row.card_id]) return '<img src="headshots/' + PHOTOS[row.card_id] + '" alt="">';
-    if (row.icon) return '<img src="themes/' + row.icon + '" alt="">';
-    if (row.card_id) {
-      const i = row.label.split(" ").slice(-2).map((s) => s[0]).join("");
-      return '<div class="mini-av">' + esc(i) + "</div>";
-    }
-    return '<div class="mini-av">🎄</div>';
+  function bigAvatar(row) {
+    if (row.card_id && PHOTOS[row.card_id]) return '<img class="bav" src="headshots/' + PHOTOS[row.card_id] + '" alt="">';
+    if (row.icon) return '<img class="bav" src="themes/' + row.icon + '" alt="">';
+    if (row.card_id) { const i = (row.label || "?").split(" ").slice(-2).map((s) => s[0]).join(""); return '<div class="bav mini-av">' + esc(i) + "</div>"; }
+    return '<div class="bav mini-av">🎄</div>';
   }
-  const money = (n) => "$" + Number(n).toLocaleString();
+
+  let slides = [], idx = 0, timer = null, built = false;
 
   function locked() {
     el.innerHTML = '<div class="res-locked"><div class="seal">K</div>' +
-      "<h1>Voting in progress</h1><p>The Krangle &amp; Co. Awards results will appear here once the host closes voting.</p></div>";
+      "<h1>Voting in progress</h1><p>The Krangle &amp; Co. Awards will be revealed here once the host closes voting.</p></div>";
   }
 
-  async function load() {
-    let res, lb;
-    try {
-      [res, lb] = await Promise.all([sb.rpc("get_results"), sb.rpc("get_leaderboard")]);
-    } catch (e) { return; }
-    const d = res && res.data;
-    if (!d || d.locked) { locked(); return; }
-    const cats = d.categories || [];
-    const board = (lb && lb.data) || [];
-
-    // Richest podium (from final money standings)
-    const rich = board.slice(0, 3);
-    const richRows = rich.length ? rich.map((p, i) =>
-      '<div class="podium-row"><div class="medal">' + MEDALS[i] + "</div>" +
-      (PHOTOS[p.card_id] ? '<img src="headshots/' + PHOTOS[p.card_id] + '" alt="">' : '<div class="mini-av">$</div>') +
-      '<div class="pn"><b>' + esc(p.character_name) + "</b><span>" + esc(p.role) + "</span></div>" +
-      '<div class="pv">' + money(p.balance) + "</div></div>").join("")
-      : '<div class="podium-row"><div class="pn"><span>No standings yet.</span></div></div>';
-    const richCard = '<div class="res-cat res-rich"><h3>💰 Richest Employee</h3>' + richRows + "</div>";
-
-    const voteCards = cats.map((c) => {
-      const isTheme = c.kind === "theme";
-      const top = (c.standings || []).slice(0, 3);
-      const rows = top.length ? top.map((r, i) => {
-        const unit = isTheme ? (r.votes + " pts") : (r.votes === 1 ? "1 vote" : r.votes + " votes");
-        return '<div class="podium-row"><div class="medal">' + MEDALS[i] + "</div>" +
-          avatar(r) + '<div class="pn"><b>' + esc(r.label) + "</b><span>" + unit + "</span></div></div>";
-      }).join("")
-        : '<div class="podium-row"><div class="pn"><span>No votes cast.</span></div></div>';
-      return '<div class="res-cat"><h3>' + esc(c.label) + "</h3>" + rows + "</div>";
-    }).join("");
+  function renderSlide() {
+    const s = slides[idx];
+    const rows = s.rows.length ? s.rows.map((r, i) =>
+      '<div class="big-row r' + i + '"><div class="big-medal">' + MEDALS[i] + "</div>" +
+      bigAvatar(r) +
+      '<div class="big-name"><b>' + esc(r.label) + "</b>" + (r.sub ? "<span>" + esc(r.sub) + "</span>" : "") + "</div>" +
+      '<div class="big-val">' + esc(r.value) + "</div></div>").join("")
+      : '<div class="big-empty">No votes were cast in this category.</div>';
 
     el.innerHTML =
-      '<div class="res-head"><div><span>Krangle &amp; Co. Annual Awards</span>' +
-      "<b>And the winners are…</b></div></div>" +
-      '<div class="res-grid">' + richCard + voteCards + "</div>";
+      '<div class="reveal">' +
+      '<button class="nav-arrow left" id="prev"' + (idx === 0 ? " disabled" : "") + ">‹</button>" +
+      '<div class="reveal-card">' +
+      '<div class="reveal-kicker">' + s.kicker + " · " + (idx + 1) + " / " + slides.length + "</div>" +
+      '<h1 class="reveal-title">' + esc(s.title) + "</h1>" +
+      '<div class="reveal-podium">' + rows + "</div>" +
+      "</div>" +
+      '<button class="nav-arrow right" id="next"' + (idx === slides.length - 1 ? " disabled" : "") + ">›</button>" +
+      '<div class="reveal-dots">' + slides.map((x, i) => '<span class="' + (i === idx ? "on" : "") + '"></span>').join("") + "</div>" +
+      "</div>";
+    const prev = document.getElementById("prev"), next = document.getElementById("next");
+    prev.onclick = () => { if (idx > 0) { idx--; renderSlide(); } };
+    next.onclick = () => { if (idx < slides.length - 1) { idx++; renderSlide(); } };
   }
 
-  load();
-  setInterval(load, 6000);
+  function build(cats, board) {
+    slides = [];
+    const rich = (board || []).slice(0, 3).map((p) => ({ label: p.character_name, sub: p.role, card_id: p.card_id, value: money(p.balance) }));
+    slides.push({ kicker: "Krangle & Co.", title: "💰 Richest Employee", rows: rich });
+    (cats || []).forEach((c) => {
+      const isTheme = c.kind === "theme";
+      const rows = (c.standings || []).slice(0, 3).map((r) => ({
+        label: r.label, card_id: r.card_id, icon: r.icon,
+        value: isTheme ? (r.votes + " pts") : (r.votes === 1 ? "1 vote" : r.votes + " votes")
+      }));
+      slides.push({ kicker: isTheme ? "Next Year" : "Awards", title: c.label, rows: rows });
+    });
+    idx = 0; renderSlide();
+  }
+
+  document.addEventListener("keydown", (e) => {
+    if (!slides.length) return;
+    if (e.key === "ArrowRight" && idx < slides.length - 1) { idx++; renderSlide(); }
+    if (e.key === "ArrowLeft" && idx > 0) { idx--; renderSlide(); }
+  });
+
+  async function poll() {
+    if (built) { if (timer) { clearInterval(timer); timer = null; } return; }
+    let res; try { res = await sb.rpc("get_results"); } catch (e) { return; }
+    const d = res && res.data;
+    if (!d || d.locked) { if (!slides.length) locked(); return; }
+    built = true;
+    if (timer) { clearInterval(timer); timer = null; }
+    let lb; try { lb = await sb.rpc("get_leaderboard"); } catch (e) { lb = { data: [] }; }
+    build(d.categories || [], (lb && lb.data) || []);
+  }
+  poll();
+  timer = setInterval(poll, 5000);
 })();
