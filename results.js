@@ -42,14 +42,28 @@
       "<h1>Voting in progress</h1><p>The Krangle &amp; Co. Awards will be revealed here once the host closes voting.</p></div>";
   }
 
+  function photoURL(path) {
+    try { return sb.storage.from("photos").getPublicUrl(path).data.publicUrl; }
+    catch (e) { return ""; }
+  }
+
   function renderSlide() {
     const s = slides[idx];
-    const rows = s.rows.length ? s.rows.map((r, i) =>
-      '<div class="big-row r' + i + '"><div class="big-medal">' + MEDALS[i] + "</div>" +
-      bigAvatar(r) +
-      '<div class="big-name"><b>' + esc(r.label) + "</b>" + (r.sub ? "<span>" + esc(r.sub) + "</span>" : "") + "</div>" +
-      '<div class="big-val">' + esc(r.value) + "</div></div>").join("")
-      : '<div class="big-empty">No votes were cast in this category.</div>';
+    let inner;
+    if (s.photo) {
+      inner = s.rows.length ? '<div class="photo-podium">' + s.rows.map((r, i) =>
+        '<div class="pp-item pp' + i + '"><div class="pp-medal">' + MEDALS[i] + "</div>" +
+        '<img src="' + photoURL(r.full_path) + '" alt="">' +
+        '<div class="pp-cap"><b>' + esc(r.owner_name) + "</b><span>" + (r.votes === 1 ? "1 vote" : r.votes + " votes") + "</span></div></div>").join("") + "</div>"
+        : '<div class="big-empty">No photos were voted on.</div>';
+    } else {
+      inner = '<div class="reveal-podium">' + (s.rows.length ? s.rows.map((r, i) =>
+        '<div class="big-row r' + i + '"><div class="big-medal">' + MEDALS[i] + "</div>" +
+        bigAvatar(r) +
+        '<div class="big-name"><b>' + esc(r.label) + "</b>" + (r.sub ? "<span>" + esc(r.sub) + "</span>" : "") + "</div>" +
+        '<div class="big-val">' + esc(r.value) + "</div></div>").join("")
+        : '<div class="big-empty">No votes were cast in this category.</div>') + "</div>";
+    }
 
     el.innerHTML =
       '<div class="reveal">' +
@@ -57,17 +71,18 @@
       '<div class="reveal-card">' +
       '<div class="reveal-kicker">' + s.kicker + " · " + (idx + 1) + " / " + slides.length + "</div>" +
       '<h1 class="reveal-title">' + esc(s.title) + "</h1>" +
-      '<div class="reveal-podium">' + rows + "</div>" +
+      inner +
       "</div>" +
       '<button class="nav-arrow right" id="next"' + (idx === slides.length - 1 ? " disabled" : "") + ">›</button>" +
       '<div class="reveal-dots">' + slides.map((x, i) => '<span class="' + (i === idx ? "on" : "") + '"></span>').join("") + "</div>" +
+      '<a class="slideshow-btn" href="slideshow.html">▶ Play photo slideshow</a>' +
       "</div>";
     const prev = document.getElementById("prev"), next = document.getElementById("next");
     prev.onclick = () => { if (idx > 0) { idx--; renderSlide(); } };
     next.onclick = () => { if (idx < slides.length - 1) { idx++; renderSlide(); } };
   }
 
-  function build(cats, board) {
+  function build(cats, board, photo) {
     slides = [];
     const rich = (board || []).slice(0, 3).map((p) => ({ label: p.character_name, sub: p.role, card_id: p.card_id, value: money(p.balance) }));
     slides.push({ kicker: "Krangle & Co.", title: "💰 Richest Employee", rows: rich });
@@ -79,6 +94,7 @@
       }));
       slides.push({ kicker: isTheme ? "Next Year" : "Awards", title: c.label, rows: rows });
     });
+    if ((photo || []).length) slides.push({ kicker: "The Evening", title: "📸 Best Photo of the Evening", photo: true, rows: photo.slice(0, 3) });
     idx = 0; renderSlide();
   }
 
@@ -96,7 +112,7 @@
     built = true;
     if (timer) { clearInterval(timer); timer = null; }
     let lb; try { lb = await sb.rpc("get_leaderboard"); } catch (e) { lb = { data: [] }; }
-    build(d.categories || [], (lb && lb.data) || []);
+    build(d.categories || [], (lb && lb.data) || [], d.photo || []);
   }
   poll();
   timer = setInterval(poll, 5000);

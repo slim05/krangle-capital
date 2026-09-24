@@ -83,6 +83,7 @@
       '<button data-t="tx" class="' + (tab === "tx" ? "on" : "") + '">Transactions</button>' +
       '<button data-t="settings" class="' + (tab === "settings" ? "on" : "") + '">Game controls</button>' +
       '<button data-t="vote" class="' + (tab === "vote" ? "on" : "") + '">Voting</button>' +
+      '<button data-t="photos" class="' + (tab === "photos" ? "on" : "") + '">Photos</button>' +
       '<button data-t="logout" style="margin-left:auto">Lock</button>' +
       '</div><div id="tabbody"></div></div></div>';
     root.querySelectorAll(".tabbar button").forEach((b) => b.onclick = () => {
@@ -98,6 +99,7 @@
     if (tab === "players") { await refreshPlayers(); renderPlayers(body); }
     else if (tab === "tx") { await refreshTx(); renderTx(body); }
     else if (tab === "vote") { renderVoting(body); }
+    else if (tab === "photos") { renderPhotosAdmin(body); }
     else renderSettings(body);
   }
 
@@ -253,6 +255,48 @@
       const r = await rpc("admin_reset_votes", { p_pw: PW });
       if (r.data && r.data.ok) { toast("Votes cleared."); renderVoting(body); }
       else toast("Reset votes failed → " + failMsg(r), true);
+    };
+  }
+
+  function photoURL(path) {
+    try { return sb.storage.from("photos").getPublicUrl(path).data.publicUrl; }
+    catch (e) { return ""; }
+  }
+
+  async function renderPhotosAdmin(body) {
+    body.innerHTML = '<div class="loading" style="min-height:30vh"><div class="spinner"></div></div>';
+    const r = await rpc("admin_list_photos", { p_pw: PW });
+    if (r.error) { body.innerHTML = '<p class="note">Couldn’t load photos → ' + failMsg(r) + "</p>"; return; }
+    const photos = r.data || [];
+    body.innerHTML =
+      '<p class="note" style="margin-top:0">' + photos.length + ' photo(s) submitted. Remove any that don’t follow the rules (fewer than 3 people, etc.). Tap a photo to view it full size.</p>' +
+      (photos.length
+        ? '<div class="adm-photo-grid">' + photos.map((p) =>
+            '<div class="adm-ph"><img src="' + photoURL(p.thumb_path) + '" data-full="' + photoURL(p.full_path) + '" alt="">' +
+            '<div class="adm-ph-meta"><b>' + esc(p.owner_name) + '</b><span>' + (p.votes === 1 ? "1 vote" : p.votes + " votes") + '</span></div>' +
+            '<button class="pill red" data-rm="' + p.id + '" style="padding:5px 9px;font-size:11px">Remove</button></div>').join("") + "</div>"
+        : '<div class="note">No photos submitted yet.</div>') +
+      '<div class="danger" style="margin-top:14px"><h4>Reset all photos</h4>' +
+      '<p class="note" style="margin-top:0">Deletes every submitted photo and its votes. Use before the party once testing is done.</p>' +
+      '<button class="pill red" id="resetPhotos">Reset photos</button></div>';
+
+    body.querySelectorAll(".adm-ph img").forEach((im) => (im.onclick = () => {
+      const lb = document.createElement("div"); lb.className = "lightbox";
+      lb.innerHTML = '<button class="lb-close">✕</button><div class="lb-inner"><img src="' + im.dataset.full + '" alt=""></div>';
+      document.body.appendChild(lb);
+      lb.onclick = () => lb.remove();
+    }));
+    body.querySelectorAll("[data-rm]").forEach((b) => (b.onclick = async () => {
+      if (!confirm("Remove this photo? This can’t be undone.")) return;
+      const rr = await rpc("admin_remove_photo", { p_pw: PW, p_id: b.dataset.rm });
+      if (rr.data && rr.data.ok) { toast("Photo removed."); renderPhotosAdmin(body); }
+      else toast("Couldn’t remove → " + failMsg(rr), true);
+    }));
+    document.getElementById("resetPhotos").onclick = async () => {
+      if (!confirm("Delete ALL submitted photos and their votes?")) return;
+      const rr = await rpc("admin_reset_photos", { p_pw: PW });
+      if (rr.data && rr.data.ok) { toast("Photos reset."); renderPhotosAdmin(body); }
+      else toast("Reset failed → " + failMsg(rr), true);
     };
   }
 

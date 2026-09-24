@@ -138,13 +138,16 @@
     const acc = await fetchAccount(CARD);
     if (!acc) { renderNotFound("Card not recognized", "Check with the host."); return; }
     state.acc = acc;
-    const [lb, tx, vs] = await Promise.all([
+    const [lb, tx, vs, ps] = await Promise.all([
       sb.rpc("get_leaderboard"),
       sb.rpc("get_my_transactions", { p_card: CARD, p_limit: 15 }),
-      sb.rpc("get_my_voting", { p_voter: CARD })
+      sb.rpc("get_my_voting", { p_voter: CARD }),
+      sb.rpc("get_photo_state", { p_voter: CARD })
     ]);
     const v = (vs && vs.data) || {};
     const votingOpen = !!v.open, moneyLocked = !!v.money_locked, submitted = !!v.submitted;
+    const pstate = (ps && ps.data) || {};
+    const uploadsOpen = !!pstate.uploads_open, myPhotos = pstate.my_count || 0;
     const board = (lb.data || []);
     const rank = board.findIndex((p) => p.card_id === CARD) + 1;
     const rt = rating(acc.balance);
@@ -182,12 +185,19 @@
       (moneyLocked
         ? '<div class="money-locked">💰 Transfers are closed.</div>'
         : '<button class="btn btn-gold" id="toXfer">Send Krangle Capital →</button>') +
+      '<div class="sec-h" style="margin-top:20px"><h3>Photo Contest</h3><div class="rule"></div></div>' +
+      (uploadsOpen
+        ? '<button class="btn btn-photo" id="toPhotos">📸&nbsp;&nbsp;Add your photos&nbsp;&nbsp;<span class="pcount">' + myPhotos + '/4</span></button>'
+        : '<div class="photo-closed">📸 Photo submissions are closed.</div>') +
+      '<button class="btn btn-ghost" id="toGallery" style="margin-top:8px">🖼&nbsp;&nbsp;View the gallery</button>' +
       '<div class="sec-h" style="margin-top:20px"><h3>Recent Activity</h3><div class="rule"></div></div>' +
       txHtml +
       '<div class="foot">Krangle &amp; Co. · Finance Division · Fully Auditable</div>';
     if (votingOpen && !submitted) document.getElementById("toVote").onclick = () => renderBallot();
     if (!votingOpen && moneyLocked) document.getElementById("toResults").onclick = () => (location.href = "results.html");
     if (!moneyLocked) document.getElementById("toXfer").onclick = () => renderTransfer(acc, board);
+    if (uploadsOpen) document.getElementById("toPhotos").onclick = () => renderPhotos();
+    document.getElementById("toGallery").onclick = () => renderGallery();
   }
 
   // ---------- TRANSFER (type-to-search recipient) ----------
@@ -285,6 +295,7 @@
       '<div class="th">Krangle &amp; Co. Awards Ballot</div>' +
       '<p class="ballot-intro">Award picks save the moment you tap a name. For the theme, set your order and tap <b>Save my ranking</b>. When everything looks good, hit <b>Submit my votes</b> below — that locks your ballot.</p>' +
       '<div id="cats"></div>' +
+      '<div id="photovote"></div>' +
       '<button class="btn btn-vote" id="submit" style="margin-top:18px">Submit my votes</button>' +
       '<p class="taptip">Not ready? Use ‹ Account to come back later — nothing is final until you submit.</p>';
     document.getElementById("back").onclick = () => renderDashboard();
@@ -369,6 +380,184 @@
 
     document.getElementById("cats").innerHTML = cats.map((c) => '<div class="vcat" id="cat_' + c.id + '"></div>').join("");
     cats.forEach(renderCat);
+
+    // photo vote section (pick up to 3, never your own)
+    const pv = await sb.rpc("get_photo_ballot", { p_voter: voter });
+    const pdata = (pv && pv.data) || { photos: [], selected: [] };
+    const allPhotos = pdata.photos || [];
+    let picks = (pdata.selected || []).slice();
+    const holder = document.getElementById("photovote");
+    if (!allPhotos.length) {
+      holder.innerHTML = '<div class="vcat"><div class="vcat-h">Best Photo of the Evening</div>' +
+        '<div class="vcat-empty">No photos were submitted, so there’s nothing to vote on here.</div></div>';
+    } else {
+      function drawPhotos() {
+        holder.innerHTML = '<div class="vcat"><div class="vcat-h">Best Photo of the Evening</div>' +
+          '<p class="rank-help">Tap up to <b>3</b> favorites. You can’t vote for your own. (' + picks.length + '/3 selected)</p>' +
+          '<div class="pv-grid">' + allPhotos.map((p) => {
+            const on = picks.indexOf(p.id) >= 0;
+            return '<div class="pv-ph' + (on ? " on" : "") + (p.mine ? " own" : "") + '" data-id="' + p.id + '">' +
+              '<img src="' + photoURL(p.thumb_path) + '" alt="">' +
+              (p.mine ? '<span class="pv-tag">Yours</span>' : (on ? '<span class="pv-tick">✓</span>' : "")) +
+              '<span class="pv-owner">' + esc(p.owner_name) + "</span></div>";
+          }).join("") + "</div></div>";
+        holder.querySelectorAll(".pv-ph").forEach((el) => (el.onclick = () => togglePick(el.dataset.id)));
+      }
+      async function togglePick(id) {
+        const ph = allPhotos.find((x) => x.id === id);
+        if (ph && ph.mine) { toast("You can’t vote for your own photo.", true); return; }
+        const at = picks.indexOf(id);
+        if (at >= 0) picks.splice(at, 1);
+        else { if (picks.length >= 3) { toast("You’ve already picked 3.", true); return; } picks.push(id); }
+        const r = await sb.rpc("set_photo_votes", { p_voter: voter, p_ids: picks });
+        if (!r.data || !r.data.ok) { toast(r.data && r.data.error === "CLOSED" ? "Voting has closed." : "Couldn’t save that pick.", true); if (at >= 0) picks.push(id); else picks = picks.filter((x) => x !== id); }
+        drawPhotos();
+      }
+      drawPhotos();
+    }
+  }
+
+  // ---------- PHOTO HELPERS ----------
+  function photoURL(path) {
+    try { return sb.storage.from("photos").getPublicUrl(path).data.publicUrl; }
+    catch (e) { return ""; }
+  }
+  // resize + re-encode to JPEG; returns a Blob. maxEdge caps the long side.
+  function processImage(file, maxEdge, quality) {
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        let w = img.naturalWidth, h = img.naturalHeight;
+        const scale = Math.min(1, maxEdge / Math.max(w, h));
+        w = Math.round(w * scale); h = Math.round(h * scale);
+        const cv = document.createElement("canvas");
+        cv.width = w; cv.height = h;
+        const ctx = cv.getContext("2d");
+        ctx.drawImage(img, 0, 0, w, h);
+        URL.revokeObjectURL(url);
+        cv.toBlob((b) => b ? resolve(b) : reject(new Error("encode failed")), "image/jpeg", quality);
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("This file could not be read as an image.")); };
+      img.src = url;
+    });
+  }
+
+  // ---------- PHOTO CONTEST: upload & manage ----------
+  async function renderPhotos() {
+    root.innerHTML = '<div class="center"><div class="phone">' + bar("Photo Contest", "Submissions") +
+      '<div class="body" id="pb"><div class="loading" style="min-height:40vh"><div class="spinner"></div></div></div></div></div>';
+    const owner = me() || CARD;
+    const { data: mine } = await sb.rpc("get_my_photos", { p_owner: owner });
+    let list = mine || [];
+
+    function draw() {
+      const remaining = 4 - list.length;
+      const grid = list.length ? list.map((p) =>
+        '<div class="mine-ph"><img src="' + photoURL(p.thumb_path) + '" alt="">' +
+        '<button class="ph-x" data-id="' + p.id + '">✕</button></div>').join("") : "";
+      document.getElementById("pb").innerHTML =
+        '<button class="back" id="back">‹ Account</button>' +
+        '<div class="th">Best Photo of the Evening</div>' +
+        '<p class="ballot-intro">Submit up to <b>4</b> photos for the contest. Every photo must include <b>3 or more people</b>. Later, everyone votes for their favorites.</p>' +
+        (list.length ? '<div class="mine-grid">' + grid + "</div>" : '<div class="photo-empty">No photos yet. Add your first below.</div>') +
+        '<div class="ph-count">' + list.length + " of 4 submitted</div>" +
+        (remaining > 0
+          ? '<label class="ph-check"><input type="checkbox" id="cert"> Every photo I add includes <b>3 or more people</b>.</label>' +
+            '<label class="btn btn-photo ph-add" id="addBtn" aria-disabled="true">📸&nbsp;&nbsp;Choose photos to add' +
+            '<input type="file" id="file" accept="image/*" multiple hidden></label>' +
+            '<div id="upmsg" class="msg" style="text-align:center"></div>'
+          : '<div class="photo-closed">You’ve submitted the maximum of 4. Remove one to swap it out.</div>') +
+        '<button class="btn btn-ghost" id="toGallery2" style="margin-top:12px">🖼&nbsp;&nbsp;View the gallery</button>';
+
+      document.getElementById("back").onclick = () => renderDashboard();
+      document.getElementById("toGallery2").onclick = () => renderGallery();
+      document.querySelectorAll(".ph-x").forEach((b) => (b.onclick = () => removeOne(b.dataset.id)));
+      if (remaining > 0) {
+        const cert = document.getElementById("cert");
+        const addBtn = document.getElementById("addBtn");
+        const file = document.getElementById("file");
+        const sync = () => addBtn.setAttribute("aria-disabled", cert.checked ? "false" : "true");
+        cert.onchange = sync; sync();
+        addBtn.onclick = (e) => { if (!cert.checked) { e.preventDefault(); toast("Please confirm the 3-or-more-people rule first.", true); } };
+        file.onchange = () => uploadFiles(file.files);
+      }
+    }
+
+    async function removeOne(id) {
+      const r = await sb.rpc("remove_my_photo", { p_owner: owner, p_id: id });
+      if (r.data && r.data.ok) { list = list.filter((p) => p.id !== id); toast("Removed."); draw(); }
+      else toast(r.data && r.data.error === "CLOSED" ? "Submissions are closed." : "Couldn’t remove.", true);
+    }
+
+    async function uploadFiles(files) {
+      const msg = document.getElementById("upmsg");
+      const slots = 4 - list.length;
+      const chosen = Array.prototype.slice.call(files, 0, slots);
+      if (files.length > slots) toast("Only " + slots + " slot(s) left — using the first " + slots + ".");
+      for (let i = 0; i < chosen.length; i++) {
+        const f = chosen[i];
+        msg.className = "msg"; msg.textContent = "Uploading photo " + (i + 1) + " of " + chosen.length + "…";
+        try {
+          if (!/^image\//.test(f.type) && !/\.(jpe?g|png|heic|heif|webp)$/i.test(f.name)) throw new Error("Not an image.");
+          const id = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2));
+          const fullBlob = await processImage(f, 4096, 0.92);
+          const thumbBlob = await processImage(f, 480, 0.8);
+          const fullPath = owner + "/" + id + "_full.jpg";
+          const thumbPath = owner + "/" + id + "_thumb.jpg";
+          const up1 = await sb.storage.from("photos").upload(fullPath, fullBlob, { contentType: "image/jpeg", upsert: false });
+          if (up1.error) throw up1.error;
+          const up2 = await sb.storage.from("photos").upload(thumbPath, thumbBlob, { contentType: "image/jpeg", upsert: false });
+          if (up2.error) throw up2.error;
+          const r = await sb.rpc("submit_photo", { p_owner: owner, p_full: fullPath, p_thumb: thumbPath });
+          if (!r.data || !r.data.ok) throw new Error(r.data && r.data.error === "LIMIT" ? "You’ve reached 4 photos." : (r.data && r.data.error === "CLOSED" ? "Submissions are closed." : "Save failed."));
+          list.push({ id: r.data.id, full_path: fullPath, thumb_path: thumbPath });
+        } catch (err) {
+          msg.className = "msg err"; msg.textContent = (err && err.message) ? err.message : "Upload failed.";
+          draw(); return;
+        }
+      }
+      toast("Photos added — thank you!"); draw();
+    }
+
+    draw();
+  }
+
+  // ---------- PHOTO CONTEST: gallery ----------
+  async function renderGallery() {
+    root.innerHTML = '<div class="center"><div class="phone">' + bar("Photo Gallery", "The Evening") +
+      '<div class="body" id="gb"><div class="loading" style="min-height:40vh"><div class="spinner"></div></div></div></div></div>';
+    const { data } = await sb.rpc("list_gallery");
+    const photos = data || [];
+    const gb = document.getElementById("gb");
+    gb.innerHTML =
+      '<button class="back" id="back">‹ Account</button>' +
+      '<div class="th">The Gallery</div>' +
+      (photos.length
+        ? '<div class="gal-grid">' + photos.map((p, i) =>
+            '<div class="gal-ph" data-i="' + i + '"><img src="' + photoURL(p.thumb_path) + '" alt="">' +
+            '<span>' + esc(p.owner_name) + "</span></div>").join("") + "</div>"
+        : '<div class="photo-empty">No photos have been submitted yet. Check back soon.</div>');
+    document.getElementById("back").onclick = () => renderDashboard();
+    gb.querySelectorAll(".gal-ph").forEach((el) => (el.onclick = () => lightbox(photos, parseInt(el.dataset.i, 10))));
+  }
+  function lightbox(photos, i) {
+    const p = photos[i];
+    const lb = document.createElement("div");
+    lb.className = "lightbox";
+    lb.innerHTML =
+      '<button class="lb-close">✕</button>' +
+      (i > 0 ? '<button class="lb-nav lb-prev">‹</button>' : "") +
+      (i < photos.length - 1 ? '<button class="lb-nav lb-next">›</button>' : "") +
+      '<div class="lb-inner"><img src="' + photoURL(p.full_path) + '" alt="">' +
+      '<div class="lb-cap">Submitted by ' + esc(p.owner_name) + "</div></div>";
+    document.body.appendChild(lb);
+    const close = () => lb.remove();
+    lb.querySelector(".lb-close").onclick = close;
+    lb.onclick = (e) => { if (e.target === lb) close(); };
+    const prev = lb.querySelector(".lb-prev"), next = lb.querySelector(".lb-next");
+    if (prev) prev.onclick = () => { close(); lightbox(photos, i - 1); };
+    if (next) next.onclick = () => { close(); lightbox(photos, i + 1); };
   }
 
   // ---------- QUICK-PAY (you tapped someone else's card) ----------
