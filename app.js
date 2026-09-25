@@ -468,10 +468,16 @@
             '<input type="file" id="file" accept="image/*" multiple hidden></label>' +
             '<div id="upmsg" class="msg" style="text-align:center"></div>'
           : '<div class="photo-closed">You’ve submitted the maximum of 4. Remove one to swap it out.</div>') +
-        '<button class="btn btn-ghost" id="toGallery2" style="margin-top:12px">🖼&nbsp;&nbsp;View the gallery</button>';
+        (list.length
+          ? '<p class="ph-review">Happy with these? Lock them in below. You can still come back and change them until voting starts.</p>' +
+            '<button class="btn btn-vote" id="submitPhotos">✓&nbsp;&nbsp;Submit my ' + list.length + (list.length === 1 ? ' photo' : ' photos') + '</button>'
+          : "") +
+        '<button class="btn btn-ghost" id="toGallery2" style="margin-top:8px">🖼&nbsp;&nbsp;View the gallery</button>';
 
       document.getElementById("back").onclick = () => renderDashboard();
       document.getElementById("toGallery2").onclick = () => renderGallery();
+      const sp = document.getElementById("submitPhotos");
+      if (sp) sp.onclick = () => renderPhotosDone(list.length);
       document.querySelectorAll(".ph-x").forEach((b) => (b.onclick = () => removeOne(b.dataset.id)));
       if (remaining > 0) {
         const cert = document.getElementById("cert");
@@ -521,6 +527,24 @@
     }
 
     draw();
+  }
+
+  // ---------- PHOTO CONTEST: submitted confirmation ----------
+  function renderPhotosDone(n) {
+    root.innerHTML = '<div class="center"><div class="phone">' + bar("Photo Contest", "Submitted") +
+      '<div class="body"><div class="receipt">' +
+      '<div class="check">✓</div><h2>You’re in the running</h2>' +
+      '<div class="sub">You submitted <b>' + n + (n === 1 ? "</b> photo" : "</b> photos") + ' for <b>Best Photo of the Evening</b>.</div>' +
+      '<div class="stamp">✦ Received by Holiday Finance ✦</div>' +
+      '<div class="taptip">You can still add or swap photos until voting begins.</div>' +
+      '<div style="max-width:280px;margin:14px auto 0">' +
+      '<button class="btn btn-gold" id="home">Back to my account</button>' +
+      '<button class="btn btn-ghost" id="gal" style="margin-top:8px">🖼&nbsp;&nbsp;See the gallery</button>' +
+      '<button class="switch-link" id="edit">Add or change my photos</button>' +
+      "</div></div></div></div></div>";
+    document.getElementById("home").onclick = () => renderDashboard();
+    document.getElementById("gal").onclick = () => renderGallery();
+    document.getElementById("edit").onclick = () => renderPhotos();
   }
 
   // ---------- PHOTO CONTEST: gallery ----------
