@@ -16,6 +16,9 @@
   const SCROLL_SPEED = 22;   // pixels per second. Raise to scroll faster.
   const TOP_PAUSE = 4;       // seconds to hold at #1 each time the list loops.
 
+  // Cards never shown on the TV board, even if the database still lists them.
+  const HIDDEN = ["KC-034", "KC-022", "KC-019", "KC-033", "KC-036", "KC-035"];
+
   function av(p, cls) {
     if (p.photo) return '<img class="' + cls + '" src="headshots/' + esc(p.photo) + '" alt="">';
     const i = p.character_name.split(" ").slice(-2).map((s) => s[0]).join("");
@@ -108,7 +111,7 @@
       sb.rpc("get_recent_transactions", { p_limit: 400 })
     ]);
     if (lb.error) return; // keep showing the last good board
-    const board = (lb.data || []);
+    const board = (lb.data || []).filter((p) => HIDDEN.indexOf(p.card_id) === -1);
     const txs = (tx.data || []);
     if (!board.length) {
       if (!built) el.innerHTML = '<div class="notfound"><div class="seal">K</div><h1>No employees yet</h1><p>Run the database setup file to seed the cast.</p></div>';
